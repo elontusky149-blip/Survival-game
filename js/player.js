@@ -298,7 +298,7 @@ export class Player {
     if (this.swimming) t -= this.hasGear('suit') ? 1 : t < 12 ? 16 : 5;
     else if (env.rain > 0.2 && !this.sheltered) t -= 4 * env.rain;
     if (this.sheltered) t += 3;
-    if (this.hasGear('coat') && t < 22) t += Math.min(13, 22 - t);
+    if (this.hasGear('coat') && t < 22) t += Math.min(20, 22 - t);
     if (this.held && this.held.id === 'torch' && !this.swimming) t += 6;
     let warm = 0;
     if (this.platform === G.raft) for (const d of G.raft.devs) if ((d.type === 'grill' && d.hot) || d.type === 'forge') warm = Math.max(warm, 1 - d.wpos.distanceTo(P) / 6);
@@ -339,7 +339,7 @@ export class Player {
       case 'hammer': if (I.actP) this.doBuild(); break;
       case 'hook': if (I.actP && !G.ents.hookOut) { this.throwDir(_v); _v.y += 0.45; _v.normalize(); G.ents.throwHook(_v2.copy(this.pos).setY(this.pos.y + 1.5), _v); this.swing(0.4, true); G.audio.sfx('throw'); } G.ents.reeling = I.act && G.ents.hookOut; break;
       case 'paddle': if (I.act && this.platform === G.raft) { G.raft.paddle.set(Math.sin(this.camYaw) * 2.0, 0, Math.cos(this.camYaw) * 2.0); G.raft.paddleT = 0.25; this.stamina = Math.max(0, this.stamina - dt * 3); if (this.atk <= 0) { this.swing(0.7, true); G.audio.sfx('paddle'); } emit('paddle'); } break;
-      case 'bow': if (I.actP) { if (this.inv.count('arrow') < 1) { G.ui.toast('No arrows'); this.cd = 0.4; break; } this.inv.remove('arrow', 1); this.throwDir(_v); _v.y += 0.06; _v.normalize(); G.ents.shootArrow(_v2.copy(this.pos).setY(this.pos.y + 1.5).addScaledVector(_v, 0.6), _v, 34, 'player'); this.cd = 0.75; G.audio.sfx('bow'); } break;
+      case 'bow': if (I.actP) { if (this.inv.count('arrow') < 1) { G.ui.toast('No arrows'); this.cd = 0.4; break; } this.inv.remove('arrow', 1); _v2.copy(this.pos).setY(this.pos.y + 1.5); this.aimDir(_v2, _v, 34); G.ents.shootArrow(_v2.addScaledVector(_v, 0.5), _v, 34, 'player'); this.cd = 0.75; G.audio.sfx('bow'); } break;
       case 'rod': if (I.actP) this.fishAction(); break;
       default:
         if (it.type === 'tool') { if (I.actP || (I.act && this.atk <= 0)) this.swing(it.id.startsWith('spear') || it.id === 'harpoon' ? 0.42 : 0.5); }
@@ -348,6 +348,17 @@ export class Player {
   }
   platformIsRaftNear() { return this.platform === G.raft || (this.swimming && this.pos.distanceTo(G.raft.group.position) < G.raft.radius + 6); }
   throwDir(out) { const cp = Math.cos(this.camPitch); return out.set(Math.sin(this.camYaw) * cp, -Math.sin(this.camPitch), Math.cos(this.camYaw) * cp).normalize(); }
+  // direction from `org` to whatever the crosshair is on, with a little aim assist and drop compensation
+  aimDir(org, out, speed) {
+    const f = this.throwDir(_v3), cp = this.cam.position; let best = null, ba = 0.075;
+    for (const t of G.ents.targetList()) {
+      const tx = t.pos.x - cp.x, ty = t.pos.y + (t.kind === 'pirate' ? 1 : 0.2) - cp.y, tz = t.pos.z - cp.z, d = Math.hypot(tx, ty, tz);
+      if (d > 70 || d < 1) continue; const a = Math.acos(Math.min(1, (tx * f.x + ty * f.y + tz * f.z) / d)) - Math.atan2(t.r, d) * 0.6;
+      if (a < ba) { ba = a; best = t; }
+    }
+    if (best) out.set(best.pos.x, best.pos.y + (best.kind === 'pirate' ? 1 : 0.2), best.pos.z); else out.copy(cp).addScaledVector(f, 55);
+    out.sub(org); const d = out.length(); out.y += (4.5 * d * d) / (speed * speed); return out.normalize();
+  }
   swing(len, quiet) { if (this.atk > 0) return; this.atk = this.atkLen = len; this.quietSwing = quiet; this.stamina = Math.max(0, this.stamina - 3); if (!quiet) G.audio.sfx('swing'); }
   strike() {
     if (this.quietSwing) return;

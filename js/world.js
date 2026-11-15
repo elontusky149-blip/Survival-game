@@ -336,10 +336,10 @@ export class World {
     const n = { id: this.nodes.length, type, def, x, z, y: y ?? terrainHeight(x, z), s, rot: (x * 12.9898 + z * 78.233) % 6.28, hp: def.hp || 1, dead: false, respawn: 0, isl };
     this.nodes.push(n);
     const k = KEY(x, z); let l = this.nodeGrid.get(k); if (!l) this.nodeGrid.set(k, (l = [])); l.push(n);
-    (this.pending[type] = this.pending[type] || []).push(n);
+    const pk = (isl ? isl.id : 'sea') + '|' + type; (this.pending[pk] = this.pending[pk] || []).push(n);
     return n;
   }
-  addDecor(type, x, y, z, s, color) { (this.pendingDecor[type] = this.pendingDecor[type] || []).push({ x, y, z, s, color, rot: (x * 3.3 + z * 1.7) % 6.28 }); }
+  addDecor(type, x, y, z, s, color, isl) { const pk = (isl ? isl.id : 'sea') + '|' + type; (this.pendingDecor[pk] = this.pendingDecor[pk] || []).push({ x, y, z, s, color, rot: (x * 3.3 + z * 1.7) % 6.28 }); }
   get pending() { return this._pending || (this._pending = {}); }
   get pendingDecor() { return this._pd || (this._pd = {}); }
 
@@ -378,7 +378,7 @@ export class World {
       if (h > -2.2 || h < -17) continue;
       const patch = noise2(x / 22, z / 22, isl.seed + 40); if (patch < 0.42) continue;
       const r = rnd();
-      if (r < 0.62) this.addDecor(r < 0.4 ? 'coral' : 'coral2', x, h, z, 0.8 + rnd() * 1.3, cols[(rnd() * cols.length) | 0]);
+      if (r < 0.62) this.addDecor(r < 0.4 ? 'coral' : 'coral2', x, h, z, 0.8 + rnd() * 1.3, cols[(rnd() * cols.length) | 0], isl);
       else if (r < 0.86) this.addNode('weed', x, z, 0.7 + rnd() * 0.8, isl);
       else if (r < 0.9) this.addNode('clam', x, z, 0.8 + rnd() * 0.4, isl);
     }
@@ -386,15 +386,15 @@ export class World {
   }
 
   finishInstances() {
-    for (const [type, list] of Object.entries(this.pending)) {
-      const parts = partsFor(type), meshes = parts.map(([g, m]) => { const im = new THREE.InstancedMesh(g, m, list.length); im.castShadow = !['sandp', 'potato', 'weed', 'clam'].includes(type); im.receiveShadow = true; im.frustumCulled = false; this.scene.add(im); return im; });
+    for (const [pk, list] of Object.entries(this.pending)) {
+      const type = pk.split('|')[1], parts = partsFor(type), meshes = parts.map(([g, m]) => { const im = new THREE.InstancedMesh(g, m, list.length); im.castShadow = !['sandp', 'potato', 'weed', 'clam'].includes(type); im.receiveShadow = true; im.frustumCulled = false; this.scene.add(im); return im; });
       list.forEach((n, i) => { n.meshes = meshes; n.idx = i; this.setNodeMatrix(n); });
-      meshes.forEach((m) => { m.instanceMatrix.needsUpdate = true; m.computeBoundingSphere(); m.frustumCulled = false; });
+      meshes.forEach((m) => { m.instanceMatrix.needsUpdate = true; m.computeBoundingSphere(); m.frustumCulled = true; });
     }
-    for (const [type, list] of Object.entries(this.pendingDecor)) {
-      const [[g, m]] = partsFor(type), im = new THREE.InstancedMesh(g, m, list.length), c = new THREE.Color();
+    for (const [pk, list] of Object.entries(this.pendingDecor)) {
+      const type = pk.split('|')[1], [[g, m]] = partsFor(type), im = new THREE.InstancedMesh(g, m, list.length), c = new THREE.Color();
       list.forEach((d, i) => { _m.compose(_p.set(d.x, d.y, d.z), _q.setFromEuler(_e.set(0, d.rot, 0)), _s.setScalar(d.s)); im.setMatrixAt(i, _m); im.setColorAt(i, c.set(d.color)); });
-      im.frustumCulled = false; im.receiveShadow = true; this.scene.add(im);
+      im.computeBoundingSphere(); im.frustumCulled = true; im.receiveShadow = true; this.scene.add(im);
     }
     this._pending = null; this._pd = null;
   }
@@ -726,9 +726,9 @@ export class World {
       for (let i = 0; i < 6; i++) { const a = (i / 6) * 6.283 + 0.52; mesh(cylG(1.6, 1.6, 4.5, 10), colMat(0xc9a02a, { metalness: 0.3 }), Math.cos(a) * 10.5, 0, Math.sin(a) * 10.5, p); }
       mesh(cylG(2.2, 3, 9, 8), 'panel', 0, 7, 0, p); mesh(cylG(0.3, 0.3, 14, 6), 'metal', 0, 18, 0, p);
       const core = mesh(sphG(1.6, 16, 12), new THREE.MeshStandardMaterial({ color: 0x9ff8ff, emissive: 0x35e0ff, emissiveIntensity: 1.2 }), 0, 13.5, 0, p, false);
-      const cl = new THREE.PointLight(0x35e0ff, 200, 120, 1.5); cl.position.set(0, 14, 0); p.add(cl);
+      const cl = new THREE.PointLight(0x35e0ff, 50, 120, 1.5); cl.position.set(0, 14, 0); p.add(cl);
       for (let r = 0; r < 7; r++) mesh(boxG(1, 0.08, 0.1), 'metal', 0, 2.3 - r * 0.4, 13.1, p, false);
-      this.animated.push((t) => { const on = G.prog && G.prog.flags.ending; core.material.emissiveIntensity = (on ? 4 : 1.2) + Math.sin(t * (on ? 5 : 1.2)) * 0.5; cl.intensity = on ? 900 : 200; core.rotation.y = t * 0.4; });
+      this.animated.push((t) => { const on = G.prog && G.prog.flags.ending; core.material.emissiveIntensity = (on ? 4 : 1.2) + Math.sin(t * (on ? 5 : 1.2)) * 0.5; cl.intensity = on ? 140 : 50; core.rotation.y = t * 0.4; });
       const plat = {
         group: p, fixed: true, name: 'core', vel: new THREE.Vector3(),
         surfaceAt(lx, lz, ly) { const d = Math.hypot(lx, lz); if (d < 11.6 && d > 3.2 && ly > 1.6) return 2.58; return null; },
