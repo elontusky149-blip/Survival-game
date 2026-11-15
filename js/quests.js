@@ -55,6 +55,7 @@ export const QUESTS = [
   { id: 'sail', s: 2, main: 1, t: 'Catch the wind', d: 'Build a Sail.', c: (p) => !!p.counts.built_sail, r: { rope: 3, cloth: 2 } },
   { id: 'bench', s: 2, main: 1, t: 'Workshop', d: 'Build a Workbench.', c: (p) => !!p.counts.built_bench, r: { scrap: 4 } },
   { id: 'shelter', s: 2, t: 'A roof and a bed', d: 'Build a Thatch Roof and a Hammock, then sleep through a night.', c: (p) => [(p.counts.built_roof ? 1 : 0) + (p.counts.built_bed ? 1 : 0) + (p.counts.sleep ? 1 : 0), 3], r: { cloth: 3, wood: 8 } },
+  { id: 'ashore', s: 2, t: 'Camp ashore', d: 'Craft a Campfire Kit and a Lean-to Kit and place both on an island.', c: (p) => [(p.counts.camp_campfire ? 1 : 0) + (p.counts.camp_leanto ? 1 : 0), 2], r: { cooked_fish: 2, rope: 2 } },
   { id: 'fisher', s: 2, t: 'Patient hands', d: 'Catch 4 fish with the rod.', c: (p) => [cnt('fish')(p), 4], r: { rope: 2, cooked_fish: 2 } },
   { id: 'camp', s: 2, t: 'Not the first', d: 'Find the castaway camp on Coconut Cay.', c: (p) => !!p.flags.poi_m_cay, r: { bandage: 1, coconut: 3 } },
   // Stage 3
@@ -101,7 +102,7 @@ export const QUESTS = [
 
 export class Progress {
   constructor() { G.prog = this; this.reset(); }
-  reset() { this.stage = 1; this.flags = {}; this.bps = {}; this.looted = {}; this.revealed = {}; this.counts = {}; this.done = {}; this.journals = []; this.radio = 0; this.radioT = 0; this.track = null; this.explored = new Array(72 * 72).fill(0); }
+  reset() { this.stage = 1; this.flags = {}; this.bps = {}; this.looted = {}; this.revealed = {}; this.counts = {}; this.done = {}; this.journals = []; this.radio = 0; this.radioT = 0; this.track = null; this.camps = []; this.explored = new Array(72 * 72).fill(0); }
   inc(k, n = 1) { this.counts[k] = (this.counts[k] || 0) + n; this.check = true; }
   setFlag(f) {
     if (this.flags[f]) return; this.flags[f] = 1; this.check = true;
@@ -132,8 +133,8 @@ export class Progress {
       G.ui.banner(`Stage ${this.stage}: ${STAGES[this.stage]}`, news ? 'Unlocked: ' + news + '…' : 'New recipes unlocked'); G.audio.sfx('stage'); G.ui.dirty = true; emit('stage', this.stage);
     }
   }
-  serialize() { return { stage: this.stage, flags: this.flags, bps: this.bps, looted: this.looted, revealed: this.revealed, counts: this.counts, done: this.done, journals: this.journals, radio: this.radio, track: this.track, explored: this.explored.join('') }; }
-  load(d) { this.reset(); for (const k of ['stage', 'flags', 'bps', 'looted', 'revealed', 'counts', 'done', 'journals', 'radio', 'track']) if (d[k] !== undefined) this[k] = d[k]; if (d.explored) this.explored = d.explored.split('').map(Number); }
+  serialize() { return { stage: this.stage, flags: this.flags, bps: this.bps, looted: this.looted, revealed: this.revealed, counts: this.counts, done: this.done, journals: this.journals, radio: this.radio, track: this.track, camps: this.camps, explored: this.explored.join('') }; }
+  load(d) { this.reset(); for (const k of ['stage', 'flags', 'bps', 'looted', 'revealed', 'counts', 'done', 'journals', 'radio', 'track', 'camps']) if (d[k] !== undefined) this[k] = d[k]; if (d.explored) this.explored = d.explored.split('').map(Number); }
 }
 
 export class Story {
@@ -153,6 +154,7 @@ export class Story {
     on('sharkhit', () => G.prog.setFlag('sharkhit'));
     for (const e of ['fish', 'sleep', 'stormsurvived', 'capture', 'farm', 'helm', 'engine', 'whale', 'piratespotted']) on(e, () => G.prog.inc(e));
     on('cooked', () => G.prog.inc('cooked'));
+    on('camp', (t) => G.prog.inc('camp_' + t));
   }
   read(id, quiet) {
     const j = JOURNALS[id]; if (!j) return;

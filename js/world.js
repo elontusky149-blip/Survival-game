@@ -5,6 +5,7 @@ import { G, clamp, lerp, smoothstep, noise2, fbm, mulberry32, emit, rand } from 
 import { mat, tex } from './textures.js';
 import { mesh, boxG, cylG, sphG, coneG, colMat, geo, makeShip, hullGeometry } from './models.js';
 import { waveHeight } from './env.js';
+import { ITEMS } from './items.js';
 
 export const ISLANDS = [
   { id: 'cay', name: 'Coconut Cay', x: 250, z: -320, r: 105, peak: 16, biome: 'tropical', seed: 11 },
@@ -210,11 +211,12 @@ export class World {
     this.scene = scene;
     this.nodes = []; this.nodeGrid = new Map(); this.colGrid = new Map();
     this.interactables = []; this.markers = []; this.sharkSpots = []; this.pirateCamps = []; this.boarSpots = []; this.floaters = [];
-    this.animated = []; this.platforms = [];
+    this.animated = []; this.platforms = []; this.fires = []; this.shelters = [];
     this.terrainMat = new THREE.MeshStandardMaterial({ vertexColors: true, map: tex('terrain'), roughness: 0.95, metalness: 0 });
     this.terrainMat.map.repeat.set(1, 1);
     for (const isl of ISLANDS) { isl.half = isl.r * 2.45; isl.flats = []; isl.group = new THREE.Group(); scene.add(isl.group); this.defineSites(isl); }
     for (const isl of ISLANDS) this.buildIsland(isl);
+    this.buildDepthMap();
     this.buildSeabed();
     for (const isl of ISLANDS) { this.buildSites(isl); this.populate(isl); }
     this.buildOceanSites();
@@ -309,6 +311,25 @@ export class World {
     this.addMarker(isl.id, isl.name, '🏝️', isl.x, isl.z);
   }
 
+  // coarse world depth map: lets the ocean shader draw shallows and surf, and calms waves near shore
+  buildDepthMap() {
+    const N = (this.dmN = 1024), W = (this.dmW = 3800), d = new Float32Array(N * N).fill(-24), px = (W * 2) / N;
+    for (const isl of ISLANDS) {
+      const i0 = Math.max(0, Math.floor((isl.x - isl.half + W) / px)), i1 = Math.min(N - 1, Math.ceil((isl.x + isl.half + W) / px));
+      const j0 = Math.max(0, Math.floor((isl.z - isl.half + W) / px)), j1 = Math.min(N - 1, Math.ceil((isl.z + isl.half + W) / px));
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) d[j * N + i] = clamp(terrainHeight(-W + (i + 0.5) * px, -W + (j + 0.5) * px), -24, 8);
+    }
+    this.depth = d;
+    const u8 = new Uint8Array(N * N); for (let i = 0; i < d.length; i++) u8[i] = Math.round(((d[i] + 24) / 32) * 255);
+    this.depthTex = new THREE.DataTexture(u8, N, N, THREE.RedFormat, THREE.UnsignedByteType);
+    this.depthTex.magFilter = this.depthTex.minFilter = THREE.LinearFilter; this.depthTex.needsUpdate = true;
+  }
+  depthAt(x, z) {
+    const N = this.dmN, W = this.dmW, gx = ((x + W) / (W * 2)) * N - 0.5, gz = ((z + W) / (W * 2)) * N - 0.5;
+    const ix = Math.floor(gx), iz = Math.floor(gz); if (ix < 0 || iz < 0 || ix >= N - 1 || iz >= N - 1) return -24;
+    const fx = gx - ix, fz = gz - iz, D = this.depth, k = iz * N + ix;
+    return (D[k] * (1 - fx) + D[k + 1] * fx) * (1 - fz) + (D[k + N] * (1 - fx) + D[k + N + 1] * fx) * fz;
+  }
   buildSeabed() {
     const N = (this.sbN = 72), g = new THREE.PlaneGeometry(1, 1, N, N); g.rotateX(-Math.PI / 2);
     g.setAttribute('color', new THREE.BufferAttribute(new Float32Array((N + 1) * (N + 1) * 3), 3));
@@ -376,10 +397,11 @@ export class World {
     for (let i = 0; i < rt; i++) {
       const a = rnd() * 6.283, d = isl.r * (0.85 + rnd() * 0.85), x = isl.x + Math.sin(a) * d, z = isl.z + Math.cos(a) * d, h = terrainHeight(x, z);
       if (h > -2.2 || h < -17) continue;
+      const tall = h < -4.6;
       const patch = noise2(x / 22, z / 22, isl.seed + 40); if (patch < 0.42) continue;
       const r = rnd();
       if (r < 0.62) this.addDecor(r < 0.4 ? 'coral' : 'coral2', x, h, z, 0.8 + rnd() * 1.3, cols[(rnd() * cols.length) | 0], isl);
-      else if (r < 0.86) this.addNode('weed', x, z, 0.7 + rnd() * 0.8, isl);
+      else if (r < 0.86 && tall) this.addNode('weed', x, z, 0.7 + rnd() * 0.8, isl);
       else if (r < 0.9) this.addNode('clam', x, z, 0.8 + rnd() * 0.4, isl);
     }
     if (b === 'jungle' || b === 'ruins') for (let i = 0; i < 5; i++) { const a = rnd() * 6.283, d = isl.r * (0.3 + rnd() * 0.3); this.boarSpots.push({ x: isl.x + Math.sin(a) * d, z: isl.z + Math.cos(a) * d }); }
@@ -743,12 +765,39 @@ export class World {
     }
   }
 
+  // ---------- player-built camps on land ----------
+  addCamp(c, fresh) {
+    const g = this.oceanGroup, y = terrainHeight(c.x, c.z);
+    if (fresh) G.prog.camps.push(c);
+    if (c.t === 'campfire') {
+      for (let i = 0; i < 7; i++) mesh(sphG(0.16, 5, 4), 'rock', c.x + Math.cos(i * 0.9) * 0.55, y + 0.08, c.z + Math.sin(i * 0.9) * 0.55, g);
+      for (let i = 0; i < 3; i++) { const l = mesh(cylG(0.06, 0.06, 0.8, 5), colMat(0x241a12), c.x, y + 0.14, c.z, g); l.rotation.set(Math.PI / 2, 0, i * 1.05); }
+      const f = mesh(coneG(0.22, 0.6, 6), new THREE.MeshBasicMaterial({ color: 0xff8c2a }), c.x, y + 0.45, c.z, g, false);
+      const l = new THREE.PointLight(0xff8a3a, 26, 20, 1.6); l.position.set(c.x, y + 1, c.z); g.add(l);
+      this.animated.push((t) => { f.scale.y = 1 + Math.sin(t * 11 + c.x) * 0.2; });
+      (this.warmSpots = this.warmSpots || []).push({ x: c.x, z: c.z });
+      const fire = { cook: c.cook || (c.cook = []) }; this.fires.push(fire);
+      this.addInteract({ id: 'camp' + this.interactables.length, kind: 'camp', x: c.x, y: y + 0.6, z: c.z, r: 2.6, label: () => G.player.cookLabel(fire, 'Campfire'), use: () => G.player.cookAt(fire) });
+      this.addCollider(c.x, c.z, 0.5);
+    } else {
+      const s = new THREE.Group(); s.position.set(c.x, y, c.z); s.rotation.y = c.r; g.add(s);
+      const rf = mesh(boxG(2.6, 0.08, 2.9), 'thatch', 0, 1.05, -0.55, s); rf.rotation.x = 0.75;
+      for (const sx of [-1.25, 1.25]) { mesh(cylG(0.05, 0.06, 2.1, 5), 'wood_dark', sx, 1.0, 0.4, s); const b = mesh(cylG(0.05, 0.05, 2.9, 5), 'wood_dark', sx, 1.0, -0.5, s); b.rotation.x = 0.75 + Math.PI / 2; }
+      mesh(cylG(0.05, 0.05, 2.6, 5), 'wood_dark', 0, 2.0, 0.42, s).rotation.z = Math.PI / 2;
+      mesh(boxG(1.9, 0.1, 0.8), 'leaf', 0, 0.06, -0.3, s);
+      this.shelters.push({ x: c.x, z: c.z });
+      this.addInteract({ id: 'camp' + this.interactables.length, kind: 'camp', x: c.x, y: y + 0.7, z: c.z, r: 2.6, label: () => 'Sleep in lean-to', use: () => G.player.sleepAt() });
+    }
+  }
+  loadCamps() { if (this.campsLoaded) return; this.campsLoaded = true; for (const c of G.prog.camps) this.addCamp(c, false); }
+
   // ---------- per-frame ----------
   update(dt) {
     const p = G.player.pos;
     this.updateSeabed(p.x, p.z);
     const t = G.clock;
     for (const fn of this.animated) fn(t);
+    for (const f of this.fires) for (const c of f.cook) if (c.t > 0) { c.t -= dt; if (c.t <= 0) { c.id = ITEMS[c.id].cook; c.done = true; G.audio.sfx('sizzle'); } }
     for (const f of this.floaters) {
       const h = waveHeight(f.x, f.z);
       f.g.position.y = h - 0.1; f.g.rotation.z = Math.sin(t * 0.8 + f.x) * f.roll; f.g.rotation.x = Math.cos(t * 0.6 + f.z) * f.roll * 0.6;

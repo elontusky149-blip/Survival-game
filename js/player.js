@@ -294,6 +294,7 @@ export class Player {
     // shelter & temperature
     this.sheltered = false;
     if (this.platform === G.raft) this.sheltered = G.raft.sheltered(this.local.x, this.local.z, this.local.y);
+    else for (const s of G.world.shelters) if (Math.hypot(s.x - P.x, s.z - P.z) < 2.2) this.sheltered = true;
     let t = env.tempAmbient;
     if (this.swimming) t -= this.hasGear('suit') ? 1 : t < 12 ? 16 : 5;
     else if (env.rain > 0.2 && !this.sheltered) t -= 4 * env.rain;
@@ -344,7 +345,29 @@ export class Player {
       default:
         if (it.type === 'tool') { if (I.actP || (I.act && this.atk <= 0)) this.swing(it.id.startsWith('spear') || it.id === 'harpoon' ? 0.42 : 0.5); }
         else if (I.actP && ['food', 'drink', 'med'].includes(it.type)) { this.consume(this.sel); this.cd = 0.35; }
+        else if (I.actP && it.type === 'place') this.placeKit(it.id);
     }
+  }
+  placeKit(id) {
+    this.cd = 0.4;
+    const x = this.pos.x + Math.sin(this.camYaw) * 1.9, z = this.pos.z + Math.cos(this.camYaw) * 1.9, h = terrainHeight(x, z);
+    if (this.platform || this.swimming || h < 0.7 || Math.abs(h - this.pos.y) > 1.2) { G.ui.toast('Place this on dry, level ground'); return; }
+    G.world.addCamp({ t: id, x, z, r: this.camYaw + Math.PI }, true);
+    const s = this.inv.slots[this.sel]; s.n--; if (s.n <= 0) this.inv.slots[this.sel] = null; G.ui.dirty = true;
+    G.audio.sfx('build'); emit('camp', id); G.ui.toast(id === 'campfire' ? '🔥 Campfire lit' : '⛺ Lean-to raised');
+  }
+  cookLabel(d, name) { const done = d.cook.filter((c) => c.done).length; if (done) return `Take cooked food (${done})`; const raw = this.rawFood(); if (raw != null && d.cook.length < 3) return `Cook ${ITEMS[this.inv.slots[raw].id].name}`; return d.cook.length ? 'Cooking…' : `${name} (need raw food)`; }
+  cookAt(d) {
+    const done = d.cook.filter((c) => c.done);
+    if (done.length) { const g = {}; for (const c of done) g[c.id] = (g[c.id] || 0) + 1; for (let i = d.cook.length - 1; i >= 0; i--) if (d.cook[i].done) d.cook.splice(i, 1); this.give(g); for (const c of done) emit('cooked', c.id); return; }
+    const raw = this.rawFood(); if (raw == null || d.cook.length >= 3) { G.ui.toast(d.cook.length ? 'Still cooking' : 'You have nothing to cook'); return; }
+    const s = this.inv.slots[raw]; d.cook.push({ id: s.id, t: 16 }); s.n--; if (s.n <= 0) this.inv.slots[raw] = null; G.ui.dirty = true; G.audio.sfx('sizzle');
+  }
+  sleepAt() {
+    const t = G.env.time;
+    if (t > 6 && t < 19) { G.ui.toast('You can only sleep at night'); return; }
+    if (G.ents.dangerNear()) { G.ui.toast('Not safe to sleep now'); return; }
+    G.ui.fade(() => { G.env.sleepTo(6.5); this.hunger = Math.max(8, this.hunger - 16); this.thirst = Math.max(8, this.thirst - 20); this.hp = Math.min(100, this.hp + 45); this.stamina = 100; emit('sleep'); }, 'You sleep until dawn…');
   }
   platformIsRaftNear() { return this.platform === G.raft || (this.swimming && this.pos.distanceTo(G.raft.group.position) < G.raft.radius + 6); }
   throwDir(out) { const cp = Math.cos(this.camPitch); return out.set(Math.sin(this.camYaw) * cp, -Math.sin(this.camPitch), Math.cos(this.camYaw) * cp).normalize(); }
@@ -492,6 +515,7 @@ export class Player {
     for (const it of G.world.interactables) {
       if (Math.abs(it.pos.x - P.x) > 8 || Math.abs(it.pos.z - P.z) > 8) continue;
       if (it.kind === 'dig' && (!G.prog.flags.treasure_map || G.prog.looted[it.id])) continue;
+      if (it.kind === 'camp') { consider(it.pos, it.r, it.label, it.use); continue; }
       consider(it.pos, it.r, () => (G.prog.looted[it.id] && it.kind !== 'journal' && it.kind !== 'water' && it.kind !== 'core' ? 'Empty' : it.label()), () => this.useWorld(it));
     }
     // gatherable nodes
@@ -528,7 +552,7 @@ export class Player {
     switch (d.type) {
       case 'chest': return 'Open ' + n;
       case 'bed': return 'Sleep';
-      case 'grill': { const done = d.cook.filter((c) => c.done).length; if (done) return `Take cooked food (${done})`; const raw = this.rawFood(); if (raw != null && d.cook.length < 3) return `Cook ${ITEMS[this.inv.slots[raw].id].name}`; return d.cook.length ? 'Cooking…' : 'Grill (need raw food)'; }
+      case 'grill': return this.cookLabel(d, 'Grill');
       case 'purifier': case 'purifier2': case 'collector': return d.water >= 1 ? `Drink / fill flask (${Math.floor(d.water)}💧)` : (d.type === 'collector' ? 'Rain collector (empty)' : 'Distilling water…');
       case 'net': return d.caught.length ? `Empty net (${d.caught.length})` : 'Collection net (empty)';
       case 'planter': return d.grow < 0 ? (this.inv.count('seed') ? 'Plant seed potato' : 'Planter (need seed potato)') : d.grow >= 1 ? 'Harvest potatoes' : `Growing… ${Math.round(d.grow * 100)}%`;
@@ -553,18 +577,8 @@ export class Player {
     const raft = G.raft, ui = G.ui;
     switch (d.type) {
       case 'chest': ui.openChest(d); G.audio.sfx('chest'); break;
-      case 'bed': {
-        const t = G.env.time;
-        if (t > 6 && t < 19) { ui.toast('You can only sleep at night'); break; }
-        if (G.ents.dangerNear()) { ui.toast('Not safe to sleep now'); break; }
-        ui.fade(() => { G.env.sleepTo(6.5); this.hunger = Math.max(8, this.hunger - 16); this.thirst = Math.max(8, this.thirst - 20); this.hp = Math.min(100, this.hp + 45); this.stamina = 100; emit('sleep'); }, 'You sleep until dawn…'); break;
-      }
-      case 'grill': {
-        const done = d.cook.filter((c) => c.done);
-        if (done.length) { const g = {}; for (const c of done) g[c.id] = (g[c.id] || 0) + 1; d.cook = d.cook.filter((c) => !c.done); this.give(g); for (const c of done) emit('cooked', c.id); break; }
-        const raw = this.rawFood(); if (raw == null || d.cook.length >= 3) { ui.toast(d.cook.length ? 'Still cooking' : 'You have nothing to cook'); break; }
-        const s = this.inv.slots[raw]; d.cook.push({ id: s.id, t: 16 }); s.n--; if (s.n <= 0) this.inv.slots[raw] = null; ui.dirty = true; G.audio.sfx('sizzle'); break;
-      }
+      case 'bed': this.sleepAt(); break;
+      case 'grill': this.cookAt(d); break;
       case 'purifier': case 'purifier2': case 'collector': {
         if (d.water < 1) { ui.toast(d.type === 'collector' ? 'Empty. It fills when it rains.' : 'Not ready yet'); break; }
         if (this.thirst < 80) { this.thirst = Math.min(100, this.thirst + 45); d.water -= 1; G.audio.sfx('drink'); emit('drink'); }

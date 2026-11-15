@@ -300,7 +300,7 @@ export class Ents {
       if (!d.hooked) { const c = currentAt(d.x, d.z, _v); d.x += (c.x + dvx) * dt; d.z += (c.z + dvz) * dt; }
       const y = waveHeight(d.x, d.z); d.g.position.set(d.x, y - 0.03, d.z); d.g.rotation.z = Math.sin(G.clock * 1.2 + d.seed) * 0.12; d.g.rotation.x = Math.cos(G.clock * 0.9 + d.seed) * 0.1;
       const far = Math.hypot(d.x - rp.x, d.z - rp.z);
-      if ((d.life <= 0 && far > 14) || far > 110 || terrainHeight(d.x, d.z) > -0.4) { if (!d.keep || d.life <= 0) { this.debris.splice(i, 1); this.scene.remove(d.g); if (d.flare) this.flare.visible = false; continue; } }
+      if ((d.life <= 0 && far > 14) || far > (d.keep ? 200 : 60 + raft.radius) || terrainHeight(d.x, d.z) > -0.4) { if (!d.keep || d.life <= 0) { this.debris.splice(i, 1); this.scene.remove(d.g); if (d.flare) this.flare.visible = false; continue; } }
       for (const n of nets) if (!d.hooked && !d.loot && Math.hypot(d.x - n.wpos.x, d.z - n.wpos.z) < 1.5) { const loot = this.takeDebris(d, true); for (const [id, k] of Object.entries(loot)) for (let q = 0; q < k; q++) n.caught.push(id); emit('netcatch'); break; }
       if (d.flare) this.flare.position.set(d.x, y + 7, d.z);
     }

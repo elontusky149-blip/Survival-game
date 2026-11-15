@@ -14,7 +14,8 @@ for (const w of WAVES) { w.k = (Math.PI * 2) / w.len; w.om = Math.sqrt(9.8 * w.k
 export function waveHeight(x, z) {
   const e = G.env; let h = 0;
   for (const w of WAVES) h += w.amp * Math.sin(w.k * (w.dx * x + w.dz * z) + w.om * e.wtime);
-  return h * e.waveScale;
+  const w = G.world;
+  return h * e.waveScale * (w && w.depth ? clamp(-w.depthAt(x, z) / 5, 0.12, 1) : 1);
 }
 
 export const WEATHER = {
@@ -76,15 +77,18 @@ const waterVS = `
 uniform float uTime, uScale;
 uniform vec4 uW[4]; // dx, dz, k, om
 uniform float uA[4];
-varying vec3 vW; varying vec3 vN; varying float vH; varying float vFade;
+uniform sampler2D uDepth; uniform float uWorld;
+varying vec3 vW; varying vec3 vN; varying float vH; varying float vFade; varying float vShal;
 void main(){
   vec4 wp = modelMatrix*vec4(position,1.0);
   float dist = length(wp.xz - cameraPosition.xz);
   float fade = 1.0 - smoothstep(260.0, 1100.0, dist);
+  float dep = texture2D(uDepth, wp.xz/(uWorld*2.0)+0.5).r*32.0-24.0;
+  vShal = clamp(-dep/5.0, 0.12, 1.0);
   float h = 0.0; vec2 g = vec2(0.0);
   for(int i=0;i<4;i++){
     float ph = uW[i].z*(uW[i].x*wp.x + uW[i].y*wp.z) + uW[i].w*uTime;
-    float a = uA[i]*uScale*fade;
+    float a = uA[i]*uScale*fade*vShal;
     h += a*sin(ph);
     g += a*uW[i].z*cos(ph)*uW[i].xy;
   }
@@ -98,8 +102,9 @@ const waterFS = `
 precision highp float;
 uniform sampler2D uNoise;
 uniform vec3 uSun, uSunCol, uZenith, uHorizon, uDeep, uShallow, uFogCol;
-uniform float uTime, uScale, uFogDen, uLight, uFlash, uRain;
-varying vec3 vW; varying vec3 vN; varying float vH; varying float vFade;
+uniform float uTime, uScale, uFogDen, uLight, uFlash, uRain, uWorld;
+uniform sampler2D uDepth;
+varying vec3 vW; varying vec3 vN; varying float vH; varying float vFade; varying float vShal;
 void main(){
   vec3 Vv = cameraPosition - vW; float dist = length(Vv); Vv /= dist;
   vec2 uv = vW.xz;
@@ -128,18 +133,25 @@ void main(){
   vec3 body = mix(uDeep, uShallow, crest*crest*0.75 + 0.08) * (0.18 + uLight*0.95);
   // sub-surface glow facing the sun on crests
   body += uShallow*uSunCol*pow(max(dot(Vv, -uSun), 0.0), 4.0)*crest*0.25*uLight;
-  vec3 col = mix(body, refl, fres);
+  // shallows: turquoise water you can see the sand through, and surf along the beach
+  float dep = texture2D(uDepth, uv/(uWorld*2.0)+0.5).r*32.0-24.0;
+  float shal = smoothstep(-11.0, -0.6, dep);
+  body = mix(body, vec3(0.06,0.55,0.56)*(0.2+uLight*0.95), shal*0.85);
+  vec3 col = mix(body, refl, fres*(1.0-shal*0.45));
   float sp = pow(max(dot(reflect(-uSun, N), Vv), 0.0), 260.0);
   col += uSunCol*sp*2.6*uLight + uSunCol*pow(max(dot(reflect(-uSun, N), Vv), 0.0), 24.0)*0.12*uLight;
   // foam on crests
   float fn = texture2D(uNoise, uv*0.19 + vec2(uTime*0.03, 0.0)).r;
   float foam = smoothstep(0.62, 0.95, crest + (fn-0.5)*0.7) * smoothstep(0.75, 2.4, uScale) ;
   foam += smoothstep(0.78, 0.9, fn*crest + a0*0.18) * 0.35;
-  col = mix(col, vec3(0.92,0.96,0.98)*(0.3+uLight*0.8), clamp(foam,0.0,1.0)*vFade*0.85);
+  float band = smoothstep(-2.2, -0.5, dep)*(1.0-smoothstep(0.6, 1.6, dep));
+  float surf = band*smoothstep(0.35, 0.9, 0.5+0.5*sin(dep*3.2 + uTime*1.3 + a0*5.0) + (fn-0.5)*0.9 + smoothstep(-0.7,0.2,dep)*0.5);
+  foam = foam*vShal + surf*0.9;
+  col = mix(col, vec3(0.92,0.96,0.98)*(0.3+uLight*0.8), clamp(foam,0.0,1.0)*max(vFade,band)*0.85);
   col += vec3(0.6,0.65,0.8)*uFlash*0.5;
   float fog = 1.0 - exp(-dist*dist*uFogDen*uFogDen);
   col = mix(col, uFogCol, fog);
-  gl_FragColor = vec4(col, mix(0.8, 1.0, clamp(fres*2.5 + fog + foam, 0.0, 1.0)));
+  gl_FragColor = vec4(col, mix(0.8 - shal*0.32, 1.0, clamp(fres*2.5*(1.0-shal*0.5) + fog + foam, 0.0, 1.0)));
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`;
@@ -213,7 +225,7 @@ export class Env {
         uW: { value: WAVES.map((w) => new THREE.Vector4(w.dx, w.dz, w.k, w.om)) }, uA: { value: WAVES.map((w) => w.amp) },
         uSun: { value: this.sunDir }, uSunCol: { value: this.sunCol }, uZenith: { value: this.zenith }, uHorizon: { value: this.horizon },
         uDeep: { value: new THREE.Color(0.005, 0.065, 0.15) }, uShallow: { value: new THREE.Color(0.03, 0.36, 0.44) },
-        uFogCol: { value: this.fogCol }, uFogDen: { value: 0.0003 }, uLight: { value: 1 }, uFlash: { value: 0 }, uRain: { value: 0 },
+        uDepth: { value: null }, uWorld: { value: 3800 }, uFogCol: { value: this.fogCol }, uFogDen: { value: 0.0003 }, uLight: { value: 1 }, uFlash: { value: 0 }, uRain: { value: 0 },
       },
     });
     this.water = new THREE.Mesh(g, this.waterMat);
@@ -350,6 +362,7 @@ export class Env {
 
     // water
     const wu = this.waterMat.uniforms;
+    if (!wu.uDepth.value && G.world) { wu.uDepth.value = G.world.depthTex; wu.uWorld.value = G.world.dmW; }
     wu.uTime.value = this.wtime; wu.uScale.value = this.waveScale; wu.uFogDen.value = fogDen;
     wu.uLight.value = this.light; wu.uFlash.value = this.flash; wu.uRain.value = this.rain;
     this.water.position.set(cam.position.x, 0, cam.position.z);

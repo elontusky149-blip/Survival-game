@@ -2,7 +2,7 @@
 
 A third-person, open-world 3D ocean survival game that runs in the browser.
 You start on four planks. Gather drifting debris, build a floating base,
-sail between nine islands, dive wrecks, fight sharks and pirates, and
+sail between nine islands, make camp ashore, dive wrecks, fight sharks and pirates, and
 uncover why the sea will not rest.
 
 No build step and no external assets: three.js is vendored in `lib/`, and

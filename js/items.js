@@ -39,6 +39,8 @@ export const ITEMS = {
   flask_full: { name: 'Water Flask', icon: '💧', type: 'drink', thirst: 45, gives: 'flask' },
   bandage: { name: 'Bandage', icon: '🩹', type: 'med', hp: 35 },
 
+  campfire: { name: 'Campfire Kit', icon: '🔥', type: 'place', stack: 5, desc: 'Place on land. Cooks food and keeps you warm.' },
+  leanto: { name: 'Lean-to Kit', icon: '⛺', type: 'place', stack: 5, desc: 'Place on land. Shelter you can sleep in at night.' },
   hook: { name: 'Throwing Hook', icon: '🪝', type: 'tool', stack: 1, desc: 'Throw at floating debris and reel it in.' },
   paddle: { name: 'Paddle', icon: '🏏', type: 'tool', stack: 1, desc: 'Row the raft where you are facing.' },
   hammer: { name: 'Build Hammer', icon: '🔨', type: 'tool', stack: 1, desc: 'Hold to build, repair and remove raft parts.' },
@@ -82,6 +84,8 @@ export const RECIPES = [
   { out: 'pick_stone', n: 1, cost: { wood: 3, stone: 3, rope: 1 }, stage: 2, cat: 'Tools' },
   { out: 'rod', n: 1, cost: { wood: 4, rope: 3, scrap: 1 }, stage: 2, cat: 'Tools' },
   { out: 'torch', n: 1, cost: { wood: 2, fiber: 2 }, stage: 2, cat: 'Tools' },
+  { out: 'campfire', n: 1, cost: { wood: 4, stone: 3 }, stage: 2, cat: 'Survival' },
+  { out: 'leanto', n: 1, cost: { wood: 6, fiber: 8 }, stage: 2, cat: 'Survival' },
   { out: 'bow', n: 1, cost: { wood: 5, rope: 3 }, stage: 2, cat: 'Weapons' },
   { out: 'arrow', n: 6, cost: { wood: 2, stone: 1 }, stage: 2, cat: 'Weapons' },
 

@@ -13,6 +13,7 @@ export class Input {
     addEventListener('mousemove', (e) => { if (this.blocked || G.state !== 'play') return; if (this.locked || this.dragLook) { const s = 0.0023 * G.settings.sens; this.lookX += e.movementX * s; this.lookY += e.movementY * s * (G.settings.invY ? -1 : 1); } });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     addEventListener('wheel', (e) => { if (this.blocked || G.state !== 'play') return; const p = G.player; p.sel = (p.sel + (e.deltaY > 0 ? 1 : 7)) % 8; }, { passive: true });
+    document.addEventListener('pointerlockerror', () => { this.noLock = true; });
     document.addEventListener('pointerlockchange', () => { const was = this.locked; this.locked = document.pointerLockElement === canvas; if (was && !this.locked && G.state === 'play' && !G.ui.panel && !this.blocked && !G.player.dead) G.ui.open('pause'); });
     // touch
     const T = document.getElementById('touch');
@@ -41,7 +42,13 @@ export class Input {
   mouse(e, d) {
     if (G.state !== 'play') return;
     if (d && e.target === this.canvas && !this.blocked) {
-      if (!this.locked && !G.ui.touch) { try { const p = this.canvas.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (_) { /* unsupported */ } this.dragLook = true; if (e.button === 0 && !document.pointerLockElement) { /* first click only captures */ } }
+      if (!this.locked && !G.ui.touch) {
+        this.dragLook = true;
+        if (!this.noLock) { // the first click only captures the mouse; it must not also swing or eat
+          try { const p = this.canvas.requestPointerLock(); if (p && p.catch) p.catch(() => { this.noLock = true; }); } catch (_) { this.noLock = true; }
+          return;
+        }
+      }
       if (e.button === 0) { this.act = true; this.actP = true; } if (e.button === 2) this.useP = true;
     }
     if (!d) { if (e.button === 0) this.act = false; this.dragLook = false; }

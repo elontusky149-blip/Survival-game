@@ -65,7 +65,7 @@ function load() {
   env.time = d.env.time; env.day = d.env.day; env.weather = d.env.weather in { clear: 1, breezy: 1, overcast: 1, drizzle: 1, rain: 1, fog: 1 } ? d.env.weather : 'overcast'; env.weatherT = d.env.weatherT || 120;
   G.prog.load(d.prog); raft.load(d.raft); player.load(d.player); ents.load(d.ents);
   if (d.build) Object.assign(player.build, d.build);
-  world.applyLooted();
+  world.applyLooted(); world.loadCamps();
   if (G.playTime > 75) ents.creatures.stalkerAt = G.playTime + 20;
 }
 G.start = (cont) => {
